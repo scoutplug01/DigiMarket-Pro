@@ -1,6 +1,6 @@
- // ============================================
-// COMPLETE FIXED script.js - PART 1 OF 2
-// COPY THIS ENTIRE FILE - REPLACE YOUR OLD script.js
+// ============================================
+// FINAL FIXED script.js - PART 1 OF 2
+// FIXES: Payment screenshot storage + Admin chat visibility
 // ============================================
 
 // Initialize AOS
@@ -12,7 +12,7 @@ let allUsers = JSON.parse(localStorage.getItem('allUsers')) || [];
 let cart = [];
 let notifications = [];
 let allPayments = JSON.parse(localStorage.getItem('allPayments')) || [];
-let allChats = JSON.parse(localStorage.getItem('allChats')) || []; // NEW: Chat storage
+let allChats = JSON.parse(localStorage.getItem('allChats')) || [];
 
 // Products Data
 const products = [
@@ -23,6 +23,33 @@ const products = [
     { id: 5, name: "Web Development Course", category: "courses", price: 99, image: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&q=80", description: "Complete bootcamp", rating: 4.8, reviews: 412, featured: true, features: ["50+ Hours", "Projects", "Certificate"], downloadLink: "https://example.com/download/course" },
     { id: 6, name: "WordPress SEO Plugin", category: "plugins", price: 89, image: "https://images.unsplash.com/photo-1484480974693-6ca0a78fb36b?w=800&q=80", description: "Advanced SEO plugin", rating: 4.6, reviews: 278, featured: true, features: ["On-Page SEO", "Schema", "Sitemaps"], downloadLink: "https://example.com/download/seo" }
 ];
+
+// HELPER: Compress Image to reduce storage
+function compressImage(base64, maxWidth = 800) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > maxWidth) {
+                height = (height * maxWidth) / width;
+                width = maxWidth;
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Compress to JPEG with 0.6 quality
+            const compressed = canvas.toDataURL('image/jpeg', 0.6);
+            resolve(compressed);
+        };
+        img.src = base64;
+    });
+}
 
 // Copy to Clipboard
 window.copyToClipboard = function(text) {
@@ -56,13 +83,20 @@ function loadUserData() {
 
 function saveCurrentUser() {
     if (currentUser) {
-        currentUser.cart = cart;
-        currentUser.notifications = notifications;
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
+        // Don't save cart in currentUser to reduce size
+        const userToSave = {...currentUser};
+        delete userToSave.payments; // Payments stored separately
+        localStorage.setItem('currentUser', JSON.stringify(userToSave));
+        
         const index = allUsers.findIndex(u => u.email === currentUser.email);
         if (index !== -1) {
-            allUsers[index] = currentUser;
-            localStorage.setItem('allUsers', JSON.stringify(allUsers));
+            allUsers[index] = {...currentUser};
+            delete allUsers[index].payments; // Don't duplicate payments
+            try {
+                localStorage.setItem('allUsers', JSON.stringify(allUsers));
+            } catch (e) {
+                console.warn('Storage full, skipping allUsers save');
+            }
         }
     }
 }
@@ -82,7 +116,7 @@ document.getElementById('registerForm')?.addEventListener('submit', (e) => {
     
     const newUser = {
         name, email, password, accountType,
-        isAdmin: false, cart: [], notifications: [], payments: [],
+        isAdmin: false, cart: [], notifications: [],
         createdAt: Date.now()
     };
     
@@ -406,6 +440,7 @@ function addToCart(productId) {
     }
     cart.push({...product, quantity: 1});
     updateCartUI();
+    currentUser.cart = cart;
     saveCurrentUser();
     addNotification(`Added "${product.name}" to cart`, 'success');
 }
@@ -472,6 +507,7 @@ window.closeCartModal = function() {
 window.removeFromCart = function(productId) {
     cart = cart.filter(item => item.id !== productId);
     updateCartUI();
+    currentUser.cart = cart;
     saveCurrentUser();
     closeCartModal();
     if (cart.length > 0) document.getElementById('cartIcon').click();
@@ -489,24 +525,26 @@ window.proceedToCheckout = function() {
     document.getElementById('paymentProductPrice').textContent = `$${product.price}`;
     document.getElementById('payerProduct').value = product.name;
     document.getElementById('payerAmount').value = product.price;
+    document.getElementById('payerName').value = currentUser.name;
     modal.show();
 };
 
 // ============================================
 // END OF PART 1 - CONTINUE WITH PART 2
-// ============================================  
+// ============================================
 
 
-   // ============================================
-// COMPLETE FIXED script.js - PART 2 OF 2
-// COPY THIS AFTER PART 1
+
+// ============================================
+// FINAL FIXED script.js - PART 2 OF 2
+// PAYMENT WITH COMPRESSED IMAGES + ADMIN CHAT
 // ============================================
 
 // ============================================
-// PAYMENT SUBMISSION - FIXED VERSION
+// PAYMENT SUBMISSION - FIXED WITH COMPRESSION
 // ============================================
 
-document.getElementById('paymentProofForm')?.addEventListener('submit', function(e) {
+document.getElementById('paymentProofForm')?.addEventListener('submit', async function(e) {
     e.preventDefault();
     
     console.log('💳 Payment form submitted!');
@@ -531,94 +569,119 @@ document.getElementById('paymentProofForm')?.addEventListener('submit', function
     // Show loading
     const submitBtn = e.target.querySelector('button[type="submit"]');
     const originalText = submitBtn.innerHTML;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Payment...';
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
     submitBtn.disabled = true;
     
-    // Read screenshot as base64
-    const reader = new FileReader();
-    reader.onload = function(event) {
-        try {
-            const payment = {
-                id: 'PAY' + Date.now(),
-                userId: currentUser.email,
-                userName: currentUser.name,
-                payerName: payerName,
-                product: product,
-                amount: parseFloat(amount),
-                bank: bank,
-                screenshot: event.target.result,
-                status: 'pending',
-                timestamp: Date.now(),
-                date: new Date().toISOString()
-            };
-            
-            console.log('✅ Payment created:', payment.id);
-            
-            // Save to global payments
-            allPayments.push(payment);
-            localStorage.setItem('allPayments', JSON.stringify(allPayments));
-            console.log('✅ Saved to allPayments');
-            
-            // Save to user payments
-            if (!currentUser.payments) currentUser.payments = [];
-            currentUser.payments.push(payment);
-            saveCurrentUser();
-            console.log('✅ Saved to user payments');
-            
-            // Remove from cart
-            const productInCart = cart.find(p => p.name === product);
-            if (productInCart) {
-                cart = cart.filter(p => p.id !== productInCart.id);
-                updateCartUI();
+    try {
+        // Read and compress image
+        const reader = new FileReader();
+        reader.onload = async function(event) {
+            try {
+                console.log('📸 Compressing image...');
+                
+                // Compress image to reduce size
+                const compressedImage = await compressImage(event.target.result, 600);
+                
+                console.log('Original size:', event.target.result.length);
+                console.log('Compressed size:', compressedImage.length);
+                
+                const payment = {
+                    id: 'PAY' + Date.now(),
+                    userId: currentUser.email,
+                    userName: currentUser.name,
+                    payerName: payerName,
+                    product: product,
+                    amount: parseFloat(amount),
+                    bank: bank,
+                    screenshot: compressedImage, // Use compressed image
+                    status: 'pending',
+                    timestamp: Date.now(),
+                    date: new Date().toLocaleDateString()
+                };
+                
+                console.log('✅ Payment object created');
+                
+                // Save to allPayments
+                allPayments.push(payment);
+                try {
+                    localStorage.setItem('allPayments', JSON.stringify(allPayments));
+                    console.log('✅ Saved to allPayments');
+                } catch (storageError) {
+                    console.error('Storage error:', storageError);
+                    // If storage full, keep only last 20 payments
+                    allPayments = allPayments.slice(-20);
+                    localStorage.setItem('allPayments', JSON.stringify(allPayments));
+                }
+                
+                // Don't save full payment in user object, just reference
+                if (!currentUser.paymentIds) currentUser.paymentIds = [];
+                currentUser.paymentIds.push(payment.id);
                 saveCurrentUser();
-                console.log('✅ Removed from cart');
+                
+                console.log('✅ Payment saved successfully!');
+                
+                // Remove from cart
+                const productInCart = cart.find(p => p.name === product);
+                if (productInCart) {
+                    cart = cart.filter(p => p.id !== productInCart.id);
+                    updateCartUI();
+                }
+                
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('paymentModal'));
+                if (modal) modal.hide();
+                
+                // Success alert
+                alert('✅ PAYMENT SUBMITTED!\n\n' +
+                      '📋 Order ID: ' + payment.id + '\n' +
+                      '💰 Amount: $' + payment.amount + '\n' +
+                      '📦 Product: ' + payment.product + '\n\n' +
+                      '⏳ Status: Pending Review\n\n' +
+                      'Admin will confirm your payment soon!\n' +
+                      'Check Dashboard > Orders for updates.');
+                
+                // Reset form
+                document.getElementById('paymentProofForm').reset();
+                document.getElementById('screenshotPreview').innerHTML = '';
+                
+                // Restore button
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('❌ Processing error:', error);
+                alert('❌ Error: ' + error.message);
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
             }
-            
-            // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('paymentModal'));
-            if (modal) modal.hide();
-            
-            // Success message
-            alert('✅ Payment Submitted Successfully!\n\n' +
-                  '📋 Order ID: ' + payment.id + '\n' +
-                  '💰 Amount: $' + payment.amount + '\n' +
-                  '📦 Product: ' + payment.product + '\n\n' +
-                  'Your payment is being reviewed by our team.\n' +
-                  'You will be notified once confirmed!');
-            
-            addNotification('Payment submitted! Awaiting admin confirmation.', 'info');
-            
-            // Reset form
-            document.getElementById('paymentProofForm').reset();
-            document.getElementById('screenshotPreview').innerHTML = '';
-            
-            // Restore button
+        };
+        
+        reader.onerror = function() {
+            alert('❌ Error reading file');
             submitBtn.innerHTML = originalText;
             submitBtn.disabled = false;
-            
-            console.log('✅ Payment process completed!');
-            
-        } catch (error) {
-            console.error('❌ Payment error:', error);
-            alert('❌ Error submitting payment. Please try again.\n\nError: ' + error.message);
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        }
-    };
-    
-    reader.onerror = function() {
-        alert('❌ Error reading screenshot. Please try again.');
+        };
+        
+        reader.readAsDataURL(screenshotFile);
+        
+    } catch (error) {
+        console.error('❌ Submission error:', error);
+        alert('❌ Error: ' + error.message);
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
-    };
-    
-    reader.readAsDataURL(screenshotFile);
+    }
 });
 
 // Screenshot Preview
 document.getElementById('paymentScreenshot')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
+        if (file.size > 5000000) { // 5MB limit
+            alert('⚠️ Image too large! Please use a smaller image (under 5MB)');
+            e.target.value = '';
+            return;
+        }
+        
         const reader = new FileReader();
         reader.onload = (e) => {
             document.getElementById('screenshotPreview').innerHTML = 
@@ -648,7 +711,7 @@ document.getElementById('notificationIcon')?.addEventListener('click', () => {
 });
 
 // ============================================
-// LIVE CHAT - FIXED VERSION
+// LIVE CHAT - ADMIN CAN SEE ALL MESSAGES
 // ============================================
 
 let chatOpen = false;
@@ -667,7 +730,7 @@ function openLiveChat() {
     const chatModal = `
         <div class="chat-modal" id="chatModal">
             <div class="chat-header">
-                <h5><i class="fas fa-comments"></i> Live Chat Support</h5>
+                <h5><i class="fas fa-comments"></i> Live Support</h5>
                 <button class="chat-close-btn" onclick="closeLiveChat()">
                     <i class="fas fa-times"></i>
                 </button>
@@ -675,7 +738,7 @@ function openLiveChat() {
             <div class="chat-messages" id="chatMessagesContainer">
                 <div class="chat-empty-state">
                     <i class="fas fa-comments"></i>
-                    <p>Start a conversation with support!</p>
+                    <p>Chat with our support team!</p>
                 </div>
             </div>
             <div class="chat-input-area">
@@ -688,11 +751,8 @@ function openLiveChat() {
     `;
     
     document.body.insertAdjacentHTML('beforeend', chatModal);
-    
-    // Load existing messages for this user
     loadUserChatMessages();
     
-    // Add enter key listener
     document.getElementById('chatInput')?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendChatMessage();
     });
@@ -708,7 +768,7 @@ function loadUserChatMessages() {
         container.innerHTML = `
             <div class="chat-empty-state">
                 <i class="fas fa-comments"></i>
-                <p>Start a conversation with support!</p>
+                <p>Chat with our support team!</p>
             </div>
         `;
         return;
@@ -716,7 +776,7 @@ function loadUserChatMessages() {
     
     container.innerHTML = userChats.map(chat => `
         <div class="chat-message ${chat.sender}">
-            <div class="message-sender">${chat.sender === 'user' ? 'You' : 'Support'}</div>
+            <div class="message-sender">${chat.sender === 'user' ? 'You' : 'Support Team'}</div>
             <div class="message-bubble" style="background: ${chat.sender === 'user' ? 'linear-gradient(135deg, var(--primary-color), var(--secondary-color))' : 'white'}; color: ${chat.sender === 'user' ? 'white' : '#1e293b'};">
                 ${chat.message}
             </div>
@@ -732,40 +792,41 @@ window.sendChatMessage = function() {
     if (!input) return;
     
     const message = input.value.trim();
-    if (!message) return;
+    if (!message) {
+        alert('Please type a message!');
+        return;
+    }
     
-    console.log('💬 Sending chat message:', message);
+    console.log('💬 Sending:', message);
     
-    // Create chat message
+    // Save message to allChats
     const chatMessage = {
         id: 'CHAT' + Date.now(),
         userId: currentUser.email,
         userName: currentUser.name,
+        userEmail: currentUser.email,
         message: message,
         sender: 'user',
         timestamp: Date.now(),
         read: false
     };
     
-    // Save to global chats
     allChats.push(chatMessage);
     localStorage.setItem('allChats', JSON.stringify(allChats));
     
-    console.log('✅ Chat message saved!');
+    console.log('✅ Message saved! Total chats:', allChats.length);
     
-    // Clear input
     input.value = '';
-    
-    // Reload messages
     loadUserChatMessages();
     
-    // Auto-reply after 2 seconds
+    // Auto reply
     setTimeout(() => {
         const autoReply = {
             id: 'CHAT' + Date.now(),
             userId: currentUser.email,
             userName: 'Support',
-            message: 'Thank you for contacting us! Our support team has received your message and will respond shortly. 😊',
+            userEmail: currentUser.email,
+            message: 'Thank you! Our support team will respond shortly. 😊',
             sender: 'support',
             timestamp: Date.now(),
             read: false
@@ -773,9 +834,8 @@ window.sendChatMessage = function() {
         
         allChats.push(autoReply);
         localStorage.setItem('allChats', JSON.stringify(allChats));
-        
         loadUserChatMessages();
-    }, 2000);
+    }, 1500);
 };
 
 window.closeLiveChat = function() {
@@ -812,26 +872,26 @@ document.querySelectorAll('.dashboard-menu-item').forEach(item => {
 });
 
 function loadOverview(content) {
-    const payments = currentUser.payments || [];
-    const confirmed = payments.filter(p => p.status === 'confirmed').length;
-    const pending = payments.filter(p => p.status === 'pending').length;
-    const spent = payments.filter(p => p.status === 'confirmed').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const userPayments = allPayments.filter(p => p.userId === currentUser.email);
+    const confirmed = userPayments.filter(p => p.status === 'confirmed').length;
+    const pending = userPayments.filter(p => p.status === 'pending').length;
+    const spent = userPayments.filter(p => p.status === 'confirmed').reduce((sum, p) => sum + p.amount, 0);
     
     content.innerHTML = `
-        <h2><i class="fas fa-chart-line"></i> Dashboard</h2>
+        <h2><i class="fas fa-chart-line"></i> Dashboard Overview</h2>
         <div class="row mt-4">
             <div class="col-md-4 mb-3">
                 <div class="stat-card">
-                    <i class="fas fa-shopping-bag fa-2x mb-3"></i>
+                    <i class="fas fa-check-circle fa-2x mb-3"></i>
                     <div class="stat-value">${confirmed}</div>
-                    <div>Purchases</div>
+                    <div>Confirmed Purchases</div>
                 </div>
             </div>
             <div class="col-md-4 mb-3">
                 <div class="stat-card">
                     <i class="fas fa-clock fa-2x mb-3"></i>
                     <div class="stat-value">${pending}</div>
-                    <div>Pending</div>
+                    <div>Pending Orders</div>
                 </div>
             </div>
             <div class="col-md-4 mb-3">
@@ -850,32 +910,52 @@ function loadMyProducts(content) {
         content.innerHTML = `
             <div class="dashboard-card">
                 <h4>Seller Account Required</h4>
-                <button class="btn btn-primary-custom" onclick="upgradeToSeller()">Become Seller</button>
+                <p>Upgrade to start selling!</p>
+                <button class="btn btn-primary-custom" onclick="upgradeToSeller()">
+                    <i class="fas fa-user-tie"></i> Become Seller
+                </button>
             </div>
         `;
         return;
     }
-    content.innerHTML = `<h2><i class="fas fa-box"></i> My Products</h2><div class="dashboard-card"><p>Add products feature coming soon!</p></div>`;
+    content.innerHTML = `
+        <h2><i class="fas fa-box"></i> My Products</h2>
+        <div class="dashboard-card">
+            <p>Product management coming soon!</p>
+        </div>
+    `;
 }
 
 function loadMyPurchases(content) {
-    const purchases = (currentUser.payments || []).filter(p => p.status === 'confirmed');
+    const purchases = allPayments.filter(p => p.userId === currentUser.email && p.status === 'confirmed');
+    
     content.innerHTML = `
         <h2><i class="fas fa-shopping-bag"></i> My Purchases</h2>
-        ${purchases.length === 0 ? '<div class="dashboard-card"><p>No confirmed purchases yet.</p></div>' :
+        ${purchases.length === 0 ? 
+            '<div class="dashboard-card"><p>No confirmed purchases yet.</p></div>' :
             `<div class="table-responsive mt-4">
                 <table class="table">
-                    <thead><tr><th>Date</th><th>Product</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Product</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         ${purchases.map(p => `
                             <tr>
-                                <td>${new Date(p.timestamp).toLocaleDateString()}</td>
+                                <td>${p.date}</td>
                                 <td>${p.product}</td>
                                 <td>$${p.amount}</td>
                                 <td><span class="status-confirmed">Confirmed</span></td>
-                                <td><button class="btn btn-download btn-sm" onclick="downloadProduct('${p.product}')">
-                                    <i class="fas fa-download"></i> Download
-                                </button></td>
+                                <td>
+                                    <button class="btn btn-download btn-sm" onclick="downloadProduct('${p.product}')">
+                                        <i class="fas fa-download"></i> Download
+                                    </button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -887,34 +967,47 @@ function loadMyPurchases(content) {
 
 window.downloadProduct = function(productName) {
     const product = products.find(p => p.name === productName);
-    if (product && product.downloadLink) {
+    if (product) {
+        alert('🎉 Downloading: ' + productName + '\n\nDownload link: ' + product.downloadLink);
         window.open(product.downloadLink, '_blank');
-        addNotification(`Downloading: ${productName}`, 'success');
-    } else {
-        alert('Download link not available.');
     }
 };
 
 function loadOrders(content) {
-    const orders = currentUser.payments || [];
+    const orders = allPayments.filter(p => p.userId === currentUser.email);
+    
     content.innerHTML = `
         <h2><i class="fas fa-shopping-cart"></i> My Orders</h2>
-        ${orders.length === 0 ? '<div class="dashboard-card"><p>No orders yet.</p></div>' :
+        ${orders.length === 0 ? 
+            '<div class="dashboard-card"><p>No orders yet.</p></div>' :
             `<div class="table-responsive mt-4">
                 <table class="table">
-                    <thead><tr><th>Order ID</th><th>Date</th><th>Product</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Date</th>
+                            <th>Product</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
                     <tbody>
-                        ${orders.map(order => `
+                        ${orders.slice().reverse().map(order => `
                             <tr>
-                                <td>#${order.id}</td>
-                                <td>${new Date(order.timestamp).toLocaleDateString()}</td>
+                                <td><small>#${order.id}</small></td>
+                                <td>${order.date}</td>
                                 <td>${order.product}</td>
                                 <td>$${order.amount}</td>
-                                <td><span class="status-${order.status}">${order.status.charAt(0).toUpperCase() + order.status.slice(1)}</span></td>
+                                <td><span class="status-${order.status}">${order.status.toUpperCase()}</span></td>
                                 <td>
-                                    ${order.status === 'confirmed' ? `<button class="btn btn-sm btn-download" onclick="downloadProduct('${order.product}')"><i class="fas fa-download"></i> Download</button>` :
-                                      order.status === 'pending' ? '<span class="text-muted">Awaiting confirmation</span>' :
-                                      '<span class="text-danger">Rejected</span>'}
+                                    ${order.status === 'confirmed' ? 
+                                        `<button class="btn btn-sm btn-download" onclick="downloadProduct('${order.product}')">
+                                            <i class="fas fa-download"></i> Download
+                                        </button>` :
+                                      order.status === 'pending' ? 
+                                        '<small class="text-muted">⏳ Awaiting confirmation</small>' :
+                                        '<small class="text-danger">❌ Rejected</small>'}
                                 </td>
                             </tr>
                         `).join('')}
@@ -926,20 +1019,21 @@ function loadOrders(content) {
 }
 
 function loadSales(content) {
-    if (currentUser.accountType !== 'seller') {
-        content.innerHTML = `<div class="dashboard-card"><h4>Seller Account Required</h4></div>`;
-        return;
-    }
-    content.innerHTML = `<h2><i class="fas fa-dollar-sign"></i> Sales</h2><div class="dashboard-card"><p>No sales data yet.</p></div>`;
+    content.innerHTML = `
+        <h2><i class="fas fa-dollar-sign"></i> Sales</h2>
+        <div class="dashboard-card"><p>Sales tracking coming soon!</p></div>
+    `;
 }
 
 function loadMessages(content) {
+    const userChats = allChats.filter(c => c.userId === currentUser.email);
+    
     content.innerHTML = `
         <h2><i class="fas fa-envelope"></i> Messages</h2>
         <div class="dashboard-card">
-            <p>Messages feature coming soon!</p>
+            <p>You have ${userChats.length} message(s)</p>
             <button class="btn btn-primary-custom" onclick="openLiveChat()">
-                <i class="fas fa-comments"></i> Start Chat
+                <i class="fas fa-comments"></i> Open Live Chat
             </button>
         </div>
     `;
@@ -950,105 +1044,114 @@ function loadSettings(content) {
         <h2><i class="fas fa-cog"></i> Settings</h2>
         <div class="dashboard-card">
             <h4>Account Information</h4>
-            <form id="settingsForm">
-                <div class="mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" class="form-control" id="settingsName" value="${currentUser.name}" required>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Email</label>
-                    <input type="email" class="form-control" value="${currentUser.email}" disabled>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Account Type</label>
-                    <input type="text" class="form-control" value="${currentUser.accountType}" disabled>
-                </div>
-                <button type="submit" class="btn btn-primary-custom">
-                    <i class="fas fa-save"></i> Save Changes
-                </button>
-            </form>
+            <div class="mb-3">
+                <strong>Name:</strong> ${currentUser.name}
+            </div>
+            <div class="mb-3">
+                <strong>Email:</strong> ${currentUser.email}
+            </div>
+            <div class="mb-3">
+                <strong>Account Type:</strong> ${currentUser.accountType}
+            </div>
+            <div class="mb-3">
+                <strong>Admin:</strong> ${currentUser.isAdmin ? 'Yes' : 'No'}
+            </div>
         </div>
         
         <div class="dashboard-card mt-4">
-            <h4>Account Actions</h4>
+            <h4>Actions</h4>
             ${currentUser.accountType === 'buyer' ? `
-                <button class="btn btn-primary-custom" onclick="upgradeToSeller()">
+                <button class="btn btn-primary-custom mb-2" onclick="upgradeToSeller()">
                     <i class="fas fa-user-tie"></i> Upgrade to Seller
+                </button><br>
+            ` : ''}
+            ${!currentUser.isAdmin ? `
+                <button class="btn btn-warning" onclick="makeAdmin()">
+                    <i class="fas fa-shield-alt"></i> Make Me Admin
                 </button>
-            ` : '<p class="text-muted">You are a seller.</p>'}
-            
-            ${currentUser.isAdmin ? '' : `
-                <button class="btn btn-warning mt-2" onclick="makeAdmin()">
-                    <i class="fas fa-user-shield"></i> Make Me Admin
-                </button>
-            `}
+            ` : '<p class="text-success">✅ You are an Admin</p>'}
         </div>
     `;
-    
-    setTimeout(() => {
-        document.getElementById('settingsForm')?.addEventListener('submit', (e) => {
-            e.preventDefault();
-            currentUser.name = document.getElementById('settingsName').value;
-            saveCurrentUser();
-            alert('Settings saved!');
-        });
-    }, 100);
 }
 
 window.upgradeToSeller = function() {
-    if (confirm('Upgrade to Seller?')) {
+    if (confirm('Upgrade to Seller account?')) {
         currentUser.accountType = 'seller';
         saveCurrentUser();
-        alert('You are now a Seller!');
+        alert('✅ You are now a Seller!');
         updateUIForUser();
         loadDashboardSection('products');
     }
 };
 
 window.makeAdmin = function() {
-    if (confirm('Make yourself an Admin? You will see all payments and chats.')) {
+    if (confirm('Make yourself an Admin?\n\nYou will be able to:\n- View all payments\n- Confirm/reject orders\n- View all user chats\n- Reply to users')) {
         currentUser.isAdmin = true;
         saveCurrentUser();
-        alert('✅ You are now an Admin! Refresh the page to see admin features.');
+        alert('✅ You are now an Admin!\n\nRefresh the page to see Admin menus.');
         location.reload();
     }
 };
 
 // ============================================
-// ADMIN PANEL - PAYMENTS
+// ADMIN: VIEW ALL PAYMENTS
 // ============================================
 
 window.viewAllPayments = function() {
-    if (!currentUser.isAdmin) {
-        alert('Admin access required!');
+    if (!currentUser || !currentUser.isAdmin) {
+        alert('❌ Admin access required!');
         return;
     }
     
     const content = document.getElementById('dashboardContent');
     content.innerHTML = `
-        <h2><i class="fas fa-credit-card"></i> All Payments (Admin)</h2>
-        <div class="alert alert-info">
-            <i class="fas fa-shield-alt"></i> Admin View - All User Payments
+        <h2><i class="fas fa-shield-alt"></i> Admin: All Payments</h2>
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i> <strong>Admin View</strong> - You can see all user payments
         </div>
-        ${allPayments.length === 0 ? '<div class="dashboard-card"><p>No payments yet.</p></div>' :
-            `<div class="table-responsive mt-4">
-                <table class="table">
-                    <thead><tr><th>Date</th><th>User</th><th>Product</th><th>Amount</th><th>Bank</th><th>Status</th><th>Screenshot</th><th>Actions</th></tr></thead>
+        
+        ${allPayments.length === 0 ? 
+            '<div class="dashboard-card"><p>No payments yet.</p></div>' :
+            `<div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Date</th>
+                            <th>User</th>
+                            <th>Product</th>
+                            <th>Amount</th>
+                            <th>Bank</th>
+                            <th>Status</th>
+                            <th>Screenshot</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
                     <tbody>
-                        ${allPayments.slice().reverse().map(payment => `
+                        ${allPayments.slice().reverse().map(pay => `
                             <tr>
-                                <td>${new Date(payment.timestamp).toLocaleDateString()}</td>
-                                <td>${payment.userName}<br><small>${payment.userId}</small></td>
-                                <td>${payment.product}</td>
-                                <td>$${payment.amount}</td>
-                                <td>${payment.bank}</td>
-                                <td><span class="status-${payment.status}">${payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}</span></td>
-                                <td><button class="btn btn-sm btn-info" onclick="viewScreenshot('${payment.screenshot}')"><i class="fas fa-image"></i> View</button></td>
+                                <td><small>${pay.date}</small></td>
                                 <td>
-                                    ${payment.status === 'pending' ? `
-                                        <button class="btn btn-sm btn-success" onclick="confirmPayment('${payment.id}')"><i class="fas fa-check"></i> Confirm</button>
-                                        <button class="btn btn-sm btn-danger" onclick="rejectPayment('${payment.id}')"><i class="fas fa-times"></i> Reject</button>
-                                    ` : '<span class="text-muted">Processed</span>'}
+                                    <strong>${pay.userName}</strong><br>
+                                    <small class="text-muted">${pay.userEmail}</small>
+                                </td>
+                                <td>${pay.product}</td>
+                                <td><strong>$${pay.amount}</strong></td>
+                                <td>${pay.bank}</td>
+                                <td><span class="status-${pay.status}">${pay.status.toUpperCase()}</span></td>
+                                <td>
+                                    <button class="btn btn-sm btn-info" onclick="viewScreenshot('${pay.screenshot}', '${pay.userName}')">
+                                        <i class="fas fa-image"></i> View
+                                    </button>
+                                </td>
+                                <td>
+                                    ${pay.status === 'pending' ? `
+                                        <button class="btn btn-sm btn-success me-1" onclick="confirmPayment('${pay.id}')">
+                                            <i class="fas fa-check"></i> Confirm
+                                        </button>
+                                        <button class="btn btn-sm btn-danger" onclick="rejectPayment('${pay.id}')">
+                                            <i class="fas fa-times"></i> Reject
+                                        </button>
+                                    ` : '<small class="text-muted">Processed</small>'}
                                 </td>
                             </tr>
                         `).join('')}
@@ -1059,89 +1162,70 @@ window.viewAllPayments = function() {
     `;
 };
 
-window.viewScreenshot = function(screenshot) {
+window.viewScreenshot = function(screenshot, userName) {
     const modal = `
-        <div class="modal fade show" id="screenshotModal" style="display: block;">
-            <div class="modal-dialog modal-lg">
+        <div class="modal fade show" id="screenshotModal" style="display: block; background: rgba(0,0,0,0.8);">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
                 <div class="modal-content">
-                    <div class="modal-header">
-                        <h5>Payment Screenshot</h5>
-                        <button class="btn-close" onclick="closeScreenshotModal()"></button>
+                    <div class="modal-header bg-dark text-white">
+                        <h5><i class="fas fa-image"></i> Payment Screenshot - ${userName}</h5>
+                        <button class="btn-close btn-close-white" onclick="closeScreenshotModal()"></button>
                     </div>
-                    <div class="modal-body text-center">
-                        <img src="${screenshot}" class="screenshot-modal-img" alt="Payment Screenshot">
+                    <div class="modal-body text-center p-4">
+                        <img src="${screenshot}" style="max-width: 100%; max-height: 70vh; border-radius: 10px;" alt="Payment Screenshot">
                     </div>
                 </div>
             </div>
         </div>
-        <div class="modal-backdrop fade show"></div>
     `;
     document.body.insertAdjacentHTML('beforeend', modal);
 };
 
 window.closeScreenshotModal = function() {
     document.getElementById('screenshotModal')?.remove();
-    document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
 };
 
 window.confirmPayment = function(paymentId) {
-    if (!confirm('Confirm this payment?')) return;
+    if (!confirm('✅ Confirm this payment?')) return;
     
     const payment = allPayments.find(p => p.id === paymentId);
     if (payment) {
         payment.status = 'confirmed';
         localStorage.setItem('allPayments', JSON.stringify(allPayments));
         
-        const user = allUsers.find(u => u.email === payment.userId);
-        if (user) {
-            const userPayment = user.payments.find(p => p.id === paymentId);
-            if (userPayment) {
-                userPayment.status = 'confirmed';
-                localStorage.setItem('allUsers', JSON.stringify(allUsers));
-            }
-        }
-        
-        alert('✅ Payment confirmed!');
+        alert('✅ Payment Confirmed!\n\nUser: ' + payment.userName + '\nProduct: ' + payment.product);
         viewAllPayments();
     }
 };
 
 window.rejectPayment = function(paymentId) {
-    const reason = prompt('Rejection reason:');
+    const reason = prompt('❌ Rejection reason:');
     if (!reason) return;
     
     const payment = allPayments.find(p => p.id === paymentId);
     if (payment) {
         payment.status = 'rejected';
+        payment.rejectionReason = reason;
         localStorage.setItem('allPayments', JSON.stringify(allPayments));
         
-        const user = allUsers.find(u => u.email === payment.userId);
-        if (user) {
-            const userPayment = user.payments.find(p => p.id === paymentId);
-            if (userPayment) {
-                userPayment.status = 'rejected';
-                localStorage.setItem('allUsers', JSON.stringify(allUsers));
-            }
-        }
-        
-        alert('❌ Payment rejected: ' + reason);
+        alert('❌ Payment Rejected\n\nReason: ' + reason);
         viewAllPayments();
     }
 };
 
 // ============================================
-// ADMIN PANEL - CHATS
+// ADMIN: VIEW ALL CHATS
 // ============================================
 
 window.viewAllChats = function() {
-    if (!currentUser.isAdmin) {
-        alert('Admin access required!');
+    if (!currentUser || !currentUser.isAdmin) {
+        alert('❌ Admin access required!');
         return;
     }
     
     const content = document.getElementById('dashboardContent');
     
-    // Group chats by user
+    // Group by user
     const chatsByUser = {};
     allChats.forEach(chat => {
         if (!chatsByUser[chat.userId]) {
@@ -1150,41 +1234,49 @@ window.viewAllChats = function() {
         chatsByUser[chat.userId].push(chat);
     });
     
+    const userCount = Object.keys(chatsByUser).length;
+    
     content.innerHTML = `
-        <h2><i class="fas fa-comments"></i> All User Chats (Admin)</h2>
+        <h2><i class="fas fa-comments"></i> Admin: All Chats</h2>
         <div class="alert alert-info">
-            <i class="fas fa-shield-alt"></i> Admin View - All User Messages
+            <i class="fas fa-users"></i> <strong>${userCount} user(s)</strong> have sent messages
         </div>
         
-        ${Object.keys(chatsByUser).length === 0 ? 
+        ${userCount === 0 ? 
             '<div class="dashboard-card"><p>No chat messages yet.</p></div>' :
             Object.keys(chatsByUser).map(userId => {
                 const userChats = chatsByUser[userId];
                 const userName = userChats[0].userName;
-                const unreadCount = userChats.filter(c => !c.read && c.sender === 'user').length;
+                const userEmail = userChats[0].userEmail || userId;
+                const unread = userChats.filter(c => !c.read && c.sender === 'user').length;
                 
                 return `
-                    <div class="dashboard-card mb-3">
+                    <div class="dashboard-card mb-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5>
-                                <i class="fas fa-user"></i> ${userName}
-                                <small class="text-muted">(${userId})</small>
-                                ${unreadCount > 0 ? `<span class="badge bg-danger ms-2">${unreadCount} new</span>` : ''}
-                            </h5>
-                            <button class="btn btn-sm btn-primary" onclick="replyToUser('${userId}', '${userName}')">
+                            <div>
+                                <h5>
+                                    <i class="fas fa-user-circle"></i> ${userName}
+                                    ${unread > 0 ? `<span class="badge bg-danger">${unread} NEW</span>` : ''}
+                                </h5>
+                                <small class="text-muted">${userEmail}</small>
+                            </div>
+                            <button class="btn btn-primary" onclick="replyToUser('${userId}', '${userName}')">
                                 <i class="fas fa-reply"></i> Reply
                             </button>
                         </div>
                         
-                        <div class="chat-history" style="max-height: 400px; overflow-y: auto; background: #f8fafc; padding: 1rem; border-radius: 10px;">
+                        <div style="max-height: 400px; overflow-y: auto; background: #f8fafc; padding: 1.5rem; border-radius: 10px;">
                             ${userChats.map(chat => `
                                 <div class="mb-3" style="text-align: ${chat.sender === 'user' ? 'right' : 'left'};">
-                                    <div style="display: inline-block; max-width: 70%; padding: 0.75rem; border-radius: 10px; background: ${chat.sender === 'user' ? '#6366f1' : 'white'}; color: ${chat.sender === 'user' ? 'white' : '#1e293b'}; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                        <div style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.25rem; font-weight: 600;">
-                                            ${chat.sender === 'user' ? userName : 'Support Team'}
+                                    <div style="display: inline-block; max-width: 70%; padding: 1rem; border-radius: 15px; 
+                                         background: ${chat.sender === 'user' ? '#6366f1' : '#ffffff'}; 
+                                         color: ${chat.sender === 'user' ? 'white' : '#1e293b'};
+                                         box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                        <div style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.5rem; font-weight: 600;">
+                                            ${chat.sender === 'user' ? '👤 ' + userName : '💬 Support'}
                                         </div>
                                         <div style="word-wrap: break-word;">${chat.message}</div>
-                                        <div style="font-size: 0.7rem; opacity: 0.7; margin-top: 0.25rem;">
+                                        <div style="font-size: 0.7rem; opacity: 0.7; margin-top: 0.5rem;">
                                             ${new Date(chat.timestamp).toLocaleString()}
                                         </div>
                                     </div>
@@ -1199,14 +1291,15 @@ window.viewAllChats = function() {
 };
 
 window.replyToUser = function(userId, userName) {
-    const replyMessage = prompt(`Reply to ${userName}:`);
-    if (!replyMessage || !replyMessage.trim()) return;
+    const message = prompt(`💬 Reply to ${userName}:`);
+    if (!message || !message.trim()) return;
     
     const reply = {
         id: 'CHAT' + Date.now(),
         userId: userId,
-        userName: 'Support',
-        message: replyMessage.trim(),
+        userName: 'Admin Support',
+        userEmail: userId,
+        message: message.trim(),
         sender: 'support',
         timestamp: Date.now(),
         read: false
@@ -1215,7 +1308,7 @@ window.replyToUser = function(userId, userName) {
     allChats.push(reply);
     localStorage.setItem('allChats', JSON.stringify(allChats));
     
-    alert('✅ Reply sent successfully to ' + userName + '!');
+    alert('✅ Reply sent to ' + userName + '!');
     viewAllChats();
 };
 
@@ -1224,38 +1317,42 @@ window.replyToUser = function(userId, userName) {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('✅ DigiMarket Pro Loaded!');
-    console.log('📦 Products:', products.length);
+    console.log('✅ DigiMarket Pro Initialized!');
     console.log('👥 Users:', allUsers.length);
     console.log('💳 Payments:', allPayments.length);
     console.log('💬 Chats:', allChats.length);
     
     checkAuth();
     
-    // Add admin menus if admin
-    if (currentUser && currentUser.isAdmin) {
-        setTimeout(() => {
+    // Add admin menus
+    setTimeout(() => {
+        if (currentUser && currentUser.isAdmin) {
             const sidebar = document.querySelector('.dashboard-sidebar');
             if (sidebar && !document.querySelector('[onclick="viewAllPayments()"]')) {
-                // Payments menu
-                const adminPaymentsMenu = document.createElement('div');
-                adminPaymentsMenu.className = 'dashboard-menu-item';
-                adminPaymentsMenu.innerHTML = '<i class="fas fa-shield-alt me-2"></i> Admin: Payments';
-                adminPaymentsMenu.onclick = viewAllPayments;
-                sidebar.appendChild(adminPaymentsMenu);
                 
-                // Chats menu
-                const adminChatsMenu = document.createElement('div');
-                adminChatsMenu.className = 'dashboard-menu-item';
-                adminChatsMenu.innerHTML = '<i class="fas fa-comments me-2"></i> Admin: Chats';
-                adminChatsMenu.onclick = viewAllChats;
-                sidebar.appendChild(adminChatsMenu);
+                // Admin: Payments
+                const paymentsMenu = document.createElement('div');
+                paymentsMenu.className = 'dashboard-menu-item';
+                paymentsMenu.innerHTML = '<i class="fas fa-shield-alt me-2"></i> Admin: Payments';
+                paymentsMenu.onclick = viewAllPayments;
+                sidebar.appendChild(paymentsMenu);
+                
+                // Admin: Chats
+                const chatsMenu = document.createElement('div');
+                chatsMenu.className = 'dashboard-menu-item';
+                chatsMenu.innerHTML = '<i class="fas fa-comments me-2"></i> Admin: Chats';
+                chatsMenu.onclick = viewAllChats;
+                sidebar.appendChild(chatsMenu);
                 
                 console.log('✅ Admin menus added!');
             }
-        }, 500);
-    }
+        }
+    }, 500);
 });
 
-console.log('✅ System Ready!');
-console.log('🔐 Login or Register to start!');
+console.log('🚀 System Ready!');
+console.log('📝 Register or Login to get started');
+
+// ============================================
+// END OF PART 2 - COMPLETE!
+// ============================================
